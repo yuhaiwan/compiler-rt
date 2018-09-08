@@ -27,6 +27,7 @@ ASAN_ACTIVATION_FLAG(int, quarantine_size_mb)
 ASAN_ACTIVATION_FLAG(int, thread_local_quarantine_size_kb)
 ASAN_ACTIVATION_FLAG(bool, alloc_dealloc_mismatch)
 ASAN_ACTIVATION_FLAG(bool, poison_heap)
+ASAN_ACTIVATION_FLAG(int, oom_simulation)
 
 COMMON_ACTIVATION_FLAG(bool, allocator_may_return_null)
 COMMON_ACTIVATION_FLAG(int, malloc_context_size)

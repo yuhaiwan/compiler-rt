@@ -309,6 +309,7 @@ void ReportRssLimitExceeded(BufferedStackTrace *stack) {
 }
 
 void ReportOutOfMemory(uptr requested_size, BufferedStackTrace *stack) {
+  return;
   ScopedInErrorReport in_report(/*fatal*/ true);
   ErrorOutOfMemory error(GetCurrentTidOrInvalid(), stack, requested_size);
   in_report.ReportError(error);

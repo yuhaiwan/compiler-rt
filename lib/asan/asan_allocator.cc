@@ -30,7 +30,8 @@
 #include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_quarantine.h"
 #include "lsan/lsan_common.h"
-
+#include <stdlib.h>
+#include <time.h>
 namespace __asan {
 
 // Valid redzone sizes are 16, 32, 64, ... 2048, so we encode them in 3 bits.
@@ -225,6 +226,7 @@ void AllocatorOptions::SetFrom(const Flags *f, const CommonFlags *cf) {
   may_return_null = cf->allocator_may_return_null;
   alloc_dealloc_mismatch = f->alloc_dealloc_mismatch;
   release_to_os_interval_ms = cf->allocator_release_to_os_interval_ms;
+  oom_simulation = f->oom_simulation;
 }
 
 void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
@@ -235,6 +237,7 @@ void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
   cf->allocator_may_return_null = may_return_null;
   f->alloc_dealloc_mismatch = alloc_dealloc_mismatch;
   cf->allocator_release_to_os_interval_ms = release_to_os_interval_ms;
+  f->oom_simulation = oom_simulation;
 }
 
 struct Allocator {
@@ -253,7 +256,7 @@ struct Allocator {
   atomic_uint16_t min_redzone;
   atomic_uint16_t max_redzone;
   atomic_uint8_t alloc_dealloc_mismatch;
-
+  atomic_uint32_t oom_simulation;
   // ------------------- Initialization ------------------------
   explicit Allocator(LinkerInitialized)
       : quarantine(LINKER_INITIALIZED),
@@ -275,9 +278,11 @@ struct Allocator {
                  memory_order_release);
     atomic_store(&min_redzone, options.min_redzone, memory_order_release);
     atomic_store(&max_redzone, options.max_redzone, memory_order_release);
+    atomic_store(&oom_simulation, options.oom_simulation, memory_order_release);
   }
 
   void InitLinkerInitialized(const AllocatorOptions &options) {
+    std::srand(time(NULL));
     SetAllocatorMayReturnNull(options.may_return_null);
     allocator.InitLinkerInitialized(options.release_to_os_interval_ms);
     SharedInitCode(options);
@@ -340,6 +345,7 @@ struct Allocator {
     options->alloc_dealloc_mismatch =
         atomic_load(&alloc_dealloc_mismatch, memory_order_acquire);
     options->release_to_os_interval_ms = allocator.ReleaseToOSIntervalMs();
+    options->oom_simulation = atomic_load(&oom_simulation, memory_order_acquire);
   }
 
   // -------------------- Helper methods. -------------------------
@@ -447,6 +453,15 @@ struct Allocator {
     }
 
     AsanThread *t = GetCurrentThread();
+    u32 oom_simulation_chance = atomic_load(&oom_simulation, memory_order_acquire);
+    if (oom_simulation_chance){
+      u32 chance = rand() % 100000;
+      if (chance < oom_simulation_chance){
+        stack->Print();
+        return nullptr;
+      }
+    }
+
     void *allocated;
     if (t) {
       AllocatorCache *cache = GetAllocatorCache(&t->malloc_storage());

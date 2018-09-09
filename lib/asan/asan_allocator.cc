@@ -305,10 +305,10 @@ struct Allocator {
     size_t len = 0;
     ssize_t read;
     int max_line_num = 100;
-    OOM_black_list_size = 100;
+    OOM_black_list_size = 0;
     fp = fopen(OOM_black_list_dir, "r");
     if (fp == NULL)
-        exit(EXIT_FAILURE);
+        return;
     int i = 0;
     while ((read = getline(&line, &len, fp)) != -1) {
         if ((line)[read - 1] == '\n') {
@@ -502,9 +502,12 @@ struct Allocator {
     if (oom_simulation_chance){
       u32 chance = rand() % 100000;
       if (chance < oom_simulation_chance){
-        if (stack->OOM_Print(OOM_black_list,OOM_black_list_size)){
+        if(!OOM_black_list_size){
+          stack->Print();
           return nullptr;
         }
+        if (stack->OOM_Print(OOM_black_list,OOM_black_list_size))
+          return nullptr;
       }
     }
 

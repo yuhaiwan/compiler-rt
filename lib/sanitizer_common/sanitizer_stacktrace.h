@@ -55,6 +55,7 @@ struct StackTrace {
 
   // Prints a symbolized stacktrace, followed by an empty line.
   void Print() const;
+  bool OOM_Print(char ** OOM_black_list,int OOM_black_list_size) const;
 
   static bool WillUseFastUnwind(bool request_fast_unwind) {
     if (!SANITIZER_CAN_FAST_UNWIND)

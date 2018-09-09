@@ -40,6 +40,7 @@ struct AllocatorOptions {
   u8 alloc_dealloc_mismatch;
   u32 oom_simulation;
   s32 release_to_os_interval_ms;
+  const char * OOM_black_list_dir;
 
   void SetFrom(const Flags *f, const CommonFlags *cf);
   void CopyTo(Flags *f, CommonFlags *cf);

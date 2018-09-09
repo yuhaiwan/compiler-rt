@@ -54,6 +54,8 @@ ASAN_FLAG(bool, detect_stack_use_after_return, false,
           "Enables stack-use-after-return checking at run-time.")
 ASAN_FLAG(int, oom_simulation, 0,
             "Enables out-of-memory simulation at run-time.")
+ASAN_FLAG(const char *, OOM_black_list_dir, "",
+            "Enables out-of-memory simulation at run-time.")
 ASAN_FLAG(int, min_uar_stack_size_log, 16, // We can't do smaller anyway.
           "Minimum fake stack size log.")
 ASAN_FLAG(int, max_uar_stack_size_log,

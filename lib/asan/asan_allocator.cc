@@ -32,6 +32,7 @@
 #include "lsan/lsan_common.h"
 #include <stdlib.h>
 #include <time.h>
+#include <stdio.h>
 namespace __asan {
 
 // Valid redzone sizes are 16, 32, 64, ... 2048, so we encode them in 3 bits.
@@ -226,6 +227,7 @@ void AllocatorOptions::SetFrom(const Flags *f, const CommonFlags *cf) {
   may_return_null = cf->allocator_may_return_null;
   alloc_dealloc_mismatch = f->alloc_dealloc_mismatch;
   release_to_os_interval_ms = cf->allocator_release_to_os_interval_ms;
+  OOM_black_list_dir = f->OOM_black_list_dir;
   oom_simulation = f->oom_simulation;
 }
 
@@ -238,6 +240,7 @@ void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
   f->alloc_dealloc_mismatch = alloc_dealloc_mismatch;
   cf->allocator_release_to_os_interval_ms = release_to_os_interval_ms;
   f->oom_simulation = oom_simulation;
+  f->OOM_black_list_dir = OOM_black_list_dir;
 }
 
 struct Allocator {
@@ -257,6 +260,10 @@ struct Allocator {
   atomic_uint16_t max_redzone;
   atomic_uint8_t alloc_dealloc_mismatch;
   atomic_uint32_t oom_simulation;
+
+  const char * OOM_black_list_dir;
+  char ** OOM_black_list;
+  int OOM_black_list_size;
   // ------------------- Initialization ------------------------
   explicit Allocator(LinkerInitialized)
       : quarantine(LINKER_INITIALIZED),
@@ -279,13 +286,50 @@ struct Allocator {
     atomic_store(&min_redzone, options.min_redzone, memory_order_release);
     atomic_store(&max_redzone, options.max_redzone, memory_order_release);
     atomic_store(&oom_simulation, options.oom_simulation, memory_order_release);
+    OOM_black_list_dir = options.OOM_black_list_dir;
+    InitOOMBlackList();
   }
+
 
   void InitLinkerInitialized(const AllocatorOptions &options) {
     std::srand(time(NULL));
     SetAllocatorMayReturnNull(options.may_return_null);
     allocator.InitLinkerInitialized(options.release_to_os_interval_ms);
     SharedInitCode(options);
+  }
+  void InitOOMBlackList(){
+    Printf("printing OOM blacklistdir\n %s\n",OOM_black_list_dir);
+    FILE * fp;
+    OOM_black_list = (char **)malloc(100);
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    int max_line_num = 100;
+    OOM_black_list_size = 100;
+    fp = fopen(OOM_black_list_dir, "r");
+    if (fp == NULL)
+        exit(EXIT_FAILURE);
+    int i = 0;
+    while ((read = getline(&line, &len, fp)) != -1) {
+        if ((line)[read - 1] == '\n') {
+          (line)[read - 1] = '\0';
+        }
+        OOM_black_list[i] = line;
+        i++;
+        line = NULL;
+        Printf("Retrieved line of length %zu :\n", read);
+        if(i >= max_line_num){
+          OOM_black_list = (char**)realloc(OOM_black_list, max_line_num*2);
+          max_line_num = max_line_num*2;
+        }
+
+    }
+    OOM_black_list_size = i;
+    Printf("OOM_black_list_size:%d\n", OOM_black_list_size);
+    for (int j = 0; j<i;j++){
+      Printf("OOM_black_list: %s :\n", OOM_black_list[j]);
+    }
+
   }
 
   bool RssLimitExceeded() {
@@ -346,6 +390,7 @@ struct Allocator {
         atomic_load(&alloc_dealloc_mismatch, memory_order_acquire);
     options->release_to_os_interval_ms = allocator.ReleaseToOSIntervalMs();
     options->oom_simulation = atomic_load(&oom_simulation, memory_order_acquire);
+    options->OOM_black_list_dir = OOM_black_list_dir;
   }
 
   // -------------------- Helper methods. -------------------------
@@ -457,8 +502,9 @@ struct Allocator {
     if (oom_simulation_chance){
       u32 chance = rand() % 100000;
       if (chance < oom_simulation_chance){
-        stack->Print();
-        return nullptr;
+        if (stack->OOM_Print(OOM_black_list,OOM_black_list_size)){
+          return nullptr;
+        }
       }
     }
 

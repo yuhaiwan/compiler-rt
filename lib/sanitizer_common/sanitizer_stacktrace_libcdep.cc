@@ -16,6 +16,7 @@
 #include "sanitizer_stacktrace.h"
 #include "sanitizer_stacktrace_printer.h"
 #include "sanitizer_symbolizer.h"
+#include <string.h>
 
 namespace __sanitizer {
 
@@ -54,6 +55,66 @@ void StackTrace::Print() const {
   if (dedup_token.length())
     Printf("DEDUP_TOKEN: %s\n", dedup_token.data());
 }
+
+bool StackTrace::OOM_Print(char ** OOM_black_list,int OOM_black_list_size) const {
+  if (trace == nullptr || size == 0) {
+    Printf("    <empty stack>\n\n");
+    return true;
+  }
+  InternalScopedString frame_desc(GetPageSizeCached() * 2);
+  InternalScopedString dedup_token(GetPageSizeCached());
+  int dedup_frames = common_flags()->dedup_token_length;
+  uptr frame_num = 0;
+  for (uptr i = 0; i < size && trace[i]; i++) {
+    // PCs in stack traces are actually the return addresses, that is,
+    // addresses of the next instructions after the call.
+    uptr pc = GetPreviousInstructionPc(trace[i]);
+    SymbolizedStack *frames = Symbolizer::GetOrInit()->SymbolizePC(pc);
+    CHECK(frames);
+    for (SymbolizedStack *cur = frames; cur; cur = cur->next) {
+      frame_desc.clear();
+
+      RenderFrame(&frame_desc, "%F", frame_num++,
+                  cur->info, common_flags()->symbolize_vs_style,
+                  common_flags()->strip_path_prefix);
+      for (int j = 0; j<OOM_black_list_size;j++){
+        if (!strcmp(frame_desc.data(),OOM_black_list[j])){
+          Printf("reached black list:\n\n");
+          Printf(" %s\n",frame_desc.data());
+          return false;
+        }
+      }
+    }
+  }
+  frame_num = 0;
+  for (uptr i = 0; i < size && trace[i]; i++) {
+    uptr pc = GetPreviousInstructionPc(trace[i]);
+    SymbolizedStack *frames = Symbolizer::GetOrInit()->SymbolizePC(pc);
+    CHECK(frames);
+    for (SymbolizedStack *cur = frames; cur; cur = cur->next) {
+      frame_desc.clear();
+
+      RenderFrame(&frame_desc, common_flags()->stack_trace_format, frame_num++,
+                  cur->info, common_flags()->symbolize_vs_style,
+                  common_flags()->strip_path_prefix);
+
+      Printf("%s\n", frame_desc.data());
+      if (dedup_frames-- > 0) {
+        if (dedup_token.length())
+          dedup_token.append("--");
+        if (cur->info.function != nullptr)
+          dedup_token.append(cur->info.function);
+      }
+    }
+    frames->ClearAll();
+  }
+  // Always print a trailing empty line after stack trace.
+  Printf("\n");
+  if (dedup_token.length())
+    Printf("DEDUP_TOKEN: %s\n", dedup_token.data());
+  return true;
+}
+
 
 void BufferedStackTrace::Unwind(u32 max_depth, uptr pc, uptr bp, void *context,
                                 uptr stack_top, uptr stack_bottom,

@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+#include<string.h>
 namespace __asan {
 
 // Valid redzone sizes are 16, 32, 64, ... 2048, so we encode them in 3 bits.
@@ -227,8 +228,9 @@ void AllocatorOptions::SetFrom(const Flags *f, const CommonFlags *cf) {
   may_return_null = cf->allocator_may_return_null;
   alloc_dealloc_mismatch = f->alloc_dealloc_mismatch;
   release_to_os_interval_ms = cf->allocator_release_to_os_interval_ms;
-  OOM_black_list_dir = f->OOM_black_list_dir;
-  oom_simulation = f->oom_simulation;
+  MemPressure_black_list = f->MemPressure_black_list;
+  MemPressure_flag_file = f->MemPressure_flag_file;
+  oom_chance = f->oom_chance;
 }
 
 void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
@@ -239,8 +241,9 @@ void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
   cf->allocator_may_return_null = may_return_null;
   f->alloc_dealloc_mismatch = alloc_dealloc_mismatch;
   cf->allocator_release_to_os_interval_ms = release_to_os_interval_ms;
-  f->oom_simulation = oom_simulation;
-  f->OOM_black_list_dir = OOM_black_list_dir;
+  f->oom_chance = oom_chance;
+  f->MemPressure_black_list = MemPressure_black_list;
+  f->MemPressure_flag_file = MemPressure_flag_file;
 }
 
 struct Allocator {
@@ -259,11 +262,13 @@ struct Allocator {
   atomic_uint16_t min_redzone;
   atomic_uint16_t max_redzone;
   atomic_uint8_t alloc_dealloc_mismatch;
-  atomic_uint32_t oom_simulation;
+  atomic_uint32_t oom_chance;
 
-  const char * OOM_black_list_dir;
+  const char * MemPressure_black_list;
+  const char * MemPressure_flag_file;
   char ** OOM_black_list;
   int OOM_black_list_size;
+  int OOM_enabled;
   // ------------------- Initialization ------------------------
   explicit Allocator(LinkerInitialized)
       : quarantine(LINKER_INITIALIZED),
@@ -285,8 +290,9 @@ struct Allocator {
                  memory_order_release);
     atomic_store(&min_redzone, options.min_redzone, memory_order_release);
     atomic_store(&max_redzone, options.max_redzone, memory_order_release);
-    atomic_store(&oom_simulation, options.oom_simulation, memory_order_release);
-    OOM_black_list_dir = options.OOM_black_list_dir;
+    atomic_store(&oom_chance, options.oom_chance, memory_order_release);
+    MemPressure_flag_file = options.MemPressure_flag_file;
+    MemPressure_black_list = options.MemPressure_black_list;
     InitOOMBlackList();
   }
 
@@ -298,7 +304,6 @@ struct Allocator {
     SharedInitCode(options);
   }
   void InitOOMBlackList(){
-    Printf("printing OOM blacklistdir\n %s\n",OOM_black_list_dir);
     FILE * fp;
     OOM_black_list = (char **)malloc(100);
     char * line = NULL;
@@ -306,7 +311,10 @@ struct Allocator {
     ssize_t read;
     int max_line_num = 100;
     OOM_black_list_size = 0;
-    fp = fopen(OOM_black_list_dir, "r");
+
+
+    Printf("printing OOM MemPressure_config_dir\n %s\n",MemPressure_black_list);
+    fp = fopen(MemPressure_black_list, "r");
     if (fp == NULL)
         return;
     int i = 0;
@@ -330,6 +338,29 @@ struct Allocator {
       Printf("OOM_black_list: %s :\n", OOM_black_list[j]);
     }
 
+  }
+  int CheckMemPressureChance(){
+
+    char chance[8] = "/chance";
+
+    FILE * fp;
+    fp = fopen(MemPressure_flag_file, "r");
+    if (fp == NULL){
+      OOM_enabled = 0;
+      return NULL;
+    }
+    ssize_t read;
+
+    char * line = NULL;
+    size_t len = 0;
+    read = getline(&line, &len, fp);
+    if ((line)[read - 1] == '\n') {
+      (line)[read - 1] = '\0';
+    }
+    OOM_enabled = atoi (line);
+    Printf("line : %d\n", line);
+    Printf("OOM_enabled : %d\n", OOM_enabled);
+    return OOM_enabled;
   }
 
   bool RssLimitExceeded() {
@@ -389,8 +420,9 @@ struct Allocator {
     options->alloc_dealloc_mismatch =
         atomic_load(&alloc_dealloc_mismatch, memory_order_acquire);
     options->release_to_os_interval_ms = allocator.ReleaseToOSIntervalMs();
-    options->oom_simulation = atomic_load(&oom_simulation, memory_order_acquire);
-    options->OOM_black_list_dir = OOM_black_list_dir;
+    options->oom_chance = atomic_load(&oom_chance, memory_order_acquire);
+    options->MemPressure_black_list = MemPressure_black_list;
+    options->MemPressure_flag_file = MemPressure_flag_file;
   }
 
   // -------------------- Helper methods. -------------------------
@@ -445,7 +477,6 @@ struct Allocator {
       return left_chunk;
     return right_chunk;
   }
-
   // -------------------- Allocation/Deallocation routines ---------------
   void *Allocate(uptr size, uptr alignment, BufferedStackTrace *stack,
                  AllocType alloc_type, bool can_fill) {
@@ -498,16 +529,22 @@ struct Allocator {
     }
 
     AsanThread *t = GetCurrentThread();
-    u32 oom_simulation_chance = atomic_load(&oom_simulation, memory_order_acquire);
-    if (oom_simulation_chance){
+    u32 oom_chance_chance = atomic_load(&oom_chance, memory_order_acquire);
+    if (oom_chance_chance){
       u32 chance = rand() % 100000;
-      if (chance < oom_simulation_chance){
-        if(!OOM_black_list_size){
-          stack->Print();
-          return nullptr;
+      if (chance < oom_chance_chance){
+        Printf("OOM_enabled : %d\n", OOM_enabled);
+        if (OOM_enabled){
+          if(!OOM_black_list_size){
+              stack->Print();
+              return nullptr;
+            }
+            if (stack->OOM_Print(OOM_black_list,OOM_black_list_size))
+              return nullptr;
         }
-        if (stack->OOM_Print(OOM_black_list,OOM_black_list_size))
-          return nullptr;
+        else{
+          CheckMemPressureChance();
+        }
       }
     }
 

@@ -229,7 +229,7 @@ void SetLowLevelAllocateCallback(LowLevelAllocateCallback callback) {
 // Allocator's OOM and other errors handling support.
 
 static atomic_uint8_t allocator_out_of_memory = {0};
-static atomic_uint8_t allocator_may_return_null = {0};
+static atomic_uint8_t allocator_may_return_null = {1};
 
 bool IsAllocatorOutOfMemory() {
   return atomic_load_relaxed(&allocator_out_of_memory);

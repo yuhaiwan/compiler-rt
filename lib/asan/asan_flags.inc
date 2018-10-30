@@ -52,10 +52,12 @@ ASAN_FLAG(bool, replace_intrin, true,
           "If set, uses custom wrappers for memset/memcpy/memmove intrinsics.")
 ASAN_FLAG(bool, detect_stack_use_after_return, false,
           "Enables stack-use-after-return checking at run-time.")
-ASAN_FLAG(int, oom_simulation, 0,
-            "Enables out-of-memory simulation at run-time.")
-ASAN_FLAG(const char *, OOM_black_list_dir, "",
-            "Enables out-of-memory simulation at run-time.")
+ASAN_FLAG(int, oom_chance, 0,
+            "Chance of oom when memory pressure simulation is enabled.")
+ASAN_FLAG(const char *, MemPressure_black_list, "",
+            "Black listed function for memory pressure simulation .")
+ASAN_FLAG(const char *, MemPressure_flag_file, "",
+            "MemPressure flag file")
 ASAN_FLAG(int, min_uar_stack_size_log, 16, // We can't do smaller anyway.
           "Minimum fake stack size log.")
 ASAN_FLAG(int, max_uar_stack_size_log,

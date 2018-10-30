@@ -38,9 +38,11 @@ struct AllocatorOptions {
   u16 max_redzone;
   u8 may_return_null;
   u8 alloc_dealloc_mismatch;
-  u32 oom_simulation;
+  u32 oom_chance;
   s32 release_to_os_interval_ms;
-  const char * OOM_black_list_dir;
+
+  const char * MemPressure_black_list;
+  const char * MemPressure_flag_file;
 
   void SetFrom(const Flags *f, const CommonFlags *cf);
   void CopyTo(Flags *f, CommonFlags *cf);
